@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-VERSION="0.1.5"
+VERSION="0.1.6"
 REPO_RAW="https://raw.githubusercontent.com/shui1iao/AnyTLS-Manager/main"
 UPDATE_URL="$REPO_RAW/anytls.sh"
 VERSION_URL="$REPO_RAW/version.txt"
@@ -149,9 +149,9 @@ display_config() {
 	say "密码: ${GREEN}$password${NC}"
 	say "------------------------------------------"
 	say "Surge:"
-	say "${GREEN}VPS = anytls, $ip, $port, password=\"$password\", skip-cert-verify=true, udp-relay=true, reuse=false${NC}"
+	say "${GREEN}VPS = anytls, $ip, $port, password=\"$password\", skip-cert-verify=true, udp-relay=true${NC}"
 	say "Mihomo:"
-	say "${GREEN}  - {\"name\":\"VPS\",\"server\":\"$ip\",\"port\":$port,\"password\":\"$password\",\"skip-cert-verify\":true,\"reuse\":false,\"type\":\"anytls\"}${NC}"
+	say "${GREEN}  - {\"name\":\"VPS\",\"server\":\"$ip\",\"port\":$port,\"password\":\"$password\",\"skip-cert-verify\":true,\"type\":\"anytls\"}${NC}"
 	say "URI:"
 	say "${GREEN}anytls://${pe}@${ip}:${port}?security=tls&type=tcp&allowInsecure=1&insecure=1#${tag}${NC}"
 	say "------------------------------------------"
