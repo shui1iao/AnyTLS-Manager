@@ -23,7 +23,7 @@
 ## 🚀 Quick Start
 
 ```bash
-bash <(curl -Ls https://anytls.shuijiao.de)
+bash <(curl -Ls https://anytls.siaoz.si)
 ```
 
 ---
