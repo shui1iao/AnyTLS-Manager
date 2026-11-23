@@ -28,8 +28,6 @@ bash <(curl -Ls https://anytls.siaoz.si)
 
 ---
 
----
-
 ## ⚠️ Notes
 
 - Run as root only on trusted VPS instances.

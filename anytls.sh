@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-VERSION="0.1.6"
+VERSION="0.1.7"
 REPO_RAW="https://raw.githubusercontent.com/shui1iao/AnyTLS-Manager/main"
 UPDATE_URL="$REPO_RAW/anytls.sh"
 VERSION_URL="$REPO_RAW/version.txt"
 BIN="/usr/local/bin/anytls-server"
+CONFIG_DIR="/etc/anytls"
+ENV_FILE="$CONFIG_DIR/anytls.env"
 SERVICE_FILE="/etc/systemd/system/anytls.service"
 SERVICE_NAME="anytls"
 
@@ -35,6 +37,14 @@ ensure_deps() {
 	((${#m[@]} == 0)) || install_pkg curl unzip grep sed systemd coreutils
 }
 validate_port() { [[ "$1" =~ ^[0-9]+$ ]] && ((10#$1 >= 1 && 10#$1 <= 65535)); }
+validate_password() {
+	local p="$1"
+	[[ -n "$p" && ${#p} -le 256 ]] || { err "密码长度无效"; return 1; }
+	[[ "$p" != -* && "$p" != *[[:space:]]* && "$p" != *'"'* && "$p" != *"'"* && "$p" != *'\'* && "$p" != *'$'* && "$p" != *'%'* ]] || {
+		err "密码不能以 - 开头，且不能包含空白、引号、反斜杠、$ 或 %"
+		return 1
+	}
+}
 rand_port() { echo $((RANDOM % 55536 + 10000)); }
 rand_pass() {
 	local a s1 s2 r
@@ -67,10 +77,10 @@ urlencode_anytls_auth() {
 	done
 	printf '%s' "$o"
 }
-asset_regex() { case "$(uname -m)" in x86_64 | amd64) echo 'linux_amd64\.zip$' ;; *)
-	err "暂只支持 amd64/x86_64，当前架构：$(uname -m)"
-	exit 1
-	;;
+asset_regex() { case "$(uname -m)" in
+	x86_64 | amd64) echo 'linux_amd64\.zip$' ;;
+	aarch64 | arm64) echo 'linux_arm64\.zip$' ;;
+	*) err "暂只支持 amd64/arm64，当前架构：$(uname -m)"; exit 1 ;;
 esac }
 latest_asset() {
 	local json url re
@@ -89,7 +99,9 @@ install_anytls() {
 	url="$(latest_asset)"
 	tmp="$(mktemp -d)"
 	info "下载 anytls-go：$url"
-	curl -fL --retry 3 -o "$tmp/anytls.zip" "$url"
+	trap 'rm -rf -- "$tmp"' RETURN
+	curl -fsSL --retry 3 -o "$tmp/anytls.zip" "$url"
+	unzip -tq "$tmp/anytls.zip"
 	unzip -q -o "$tmp/anytls.zip" -d "$tmp"
 	local found
 	found=$(find "$tmp" -type f -name 'anytls-server*' | head -n1)
@@ -107,14 +119,22 @@ install_anytls() {
 	}
 	read -rp "请输入 anytls 密码（留空随机）: " password
 	password=${password:-$(rand_pass)}
-	write_service "$port" "$password"
+	validate_password "$password" || exit 1
+	write_service "$((10#$port))" "$password"
 	systemctl daemon-reload
-	systemctl enable --now "$SERVICE_NAME"
+	systemctl enable "$SERVICE_NAME"
+	systemctl restart "$SERVICE_NAME"
 	ok "AnyTLS-Go 核心已安装/更新并启动"
 	display_config "$port" "$password"
 }
 write_service() {
-	local port="$1" password="$2"
+	local port="$1" password="$2" env_tmp
+	mkdir -p "$CONFIG_DIR"
+	chmod 0700 "$CONFIG_DIR"
+	env_tmp="$(mktemp "$CONFIG_DIR/.anytls.XXXXXX.env")"
+	printf 'ANYTLS_PASSWORD=%s\n' "$password" >"$env_tmp"
+	chmod 0600 "$env_tmp"
+	mv -f "$env_tmp" "$ENV_FILE"
 	cat >"$SERVICE_FILE" <<EOF
 [Unit]
 Description=AnyTLS Server
@@ -125,7 +145,8 @@ Wants=network-online.target
 Type=simple
 User=root
 Group=root
-ExecStart=$BIN -l 0.0.0.0:$port -p $password
+EnvironmentFile=$ENV_FILE
+ExecStart=$BIN -l 0.0.0.0:$port -p \${ANYTLS_PASSWORD}
 Restart=on-failure
 RestartSec=5
 LimitNOFILE=1048576
@@ -135,7 +156,13 @@ WantedBy=multi-user.target
 EOF
 }
 parse_port() { grep '^ExecStart=' "$SERVICE_FILE" | sed -n 's/.*-l [^:]*:\([0-9]*\).*/\1/p'; }
-parse_pass() { grep '^ExecStart=' "$SERVICE_FILE" | sed -n 's/.* -p \([^ ]*\).*/\1/p'; }
+parse_pass() {
+	if [[ -f "$ENV_FILE" ]]; then
+		sed -n 's/^ANYTLS_PASSWORD=//p' "$ENV_FILE" | head -n1
+	else
+		grep '^ExecStart=' "$SERVICE_FILE" | sed -n 's/.* -p \([^ ]*\).*/\1/p'
+	fi
+}
 display_config() {
 	local port="$1" password="$2" ip pe tag
 	ip=$(curl -fsS4 https://ipv4.icanhazip.com 2>/dev/null | tr -d '\n' || true)
@@ -177,7 +204,8 @@ modify_config() {
 	}
 	read -rp "新密码（留空随机）: " password
 	password=${password:-$(rand_pass)}
-	write_service "$port" "$password"
+	validate_password "$password" || return 1
+	write_service "$((10#$port))" "$password"
 	systemctl daemon-reload
 	systemctl restart "$SERVICE_NAME"
 	ok "配置已更新"
@@ -188,6 +216,7 @@ uninstall_anytls() {
 	[[ "$y" =~ ^[Yy]$ ]] || return 0
 	systemctl disable --now "$SERVICE_NAME" 2>/dev/null || true
 	rm -f "$SERVICE_FILE" "$BIN"
+	rm -rf "$CONFIG_DIR"
 	systemctl daemon-reload
 	ok "已卸载 anytls"
 }
@@ -205,9 +234,11 @@ check_update() {
 	tmp=$(mktemp)
 	curl -fsSL "$UPDATE_URL" -o "$tmp"
 	bash -n "$tmp"
-	install -m 0755 "$tmp" "$0"
+	local target="$0"
+	[[ -f "$target" && -w "$target" ]] || target="/usr/local/bin/anytls-manager"
+	install -m 0755 "$tmp" "$target"
 	rm -f "$tmp"
-	ok "脚本已更新"
+	ok "脚本已更新至 $target"
 	exit 0
 }
 install_status() { [[ -x "$BIN" ]] && printf "${GREEN}已安装${NC}" || printf "${RED}未安装${NC}"; }

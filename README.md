@@ -28,8 +28,6 @@ bash <(curl -Ls https://anytls.siaoz.si)
 
 ---
 
----
-
 ## ⚠️ 注意事项
 
 - 请在可信 VPS 上以 root 执行。
